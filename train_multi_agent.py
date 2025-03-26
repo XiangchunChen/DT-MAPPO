@@ -2,13 +2,9 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from AutoEncoder import AutoEncoder
+from others.AutoEncoder import AutoEncoder
 from Environment_multi import MultiHopNetwork
 from PPO import PPO
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
 import tensorflow as tf
 
 # # 启用PyTorch异常检测
@@ -112,7 +108,7 @@ def train(env, agents, task_num):
     success_rate_placeholder = tf.placeholder(tf.float32, shape=())
     transmit_time_placeholder = tf.placeholder(tf.float32, shape=())
     wait_time_placeholder = tf.placeholder(tf.float32, shape=())
-    avg_reward_placeholder = tf.placeholder(tf.float32, shape=())
+    global_reward_placeholder = tf.placeholder(tf.float32, shape=())
 
     # 创建摘要操作
     completion_time_summary = tf.summary.scalar("Completion Time", completion_time_placeholder)
@@ -120,7 +116,7 @@ def train(env, agents, task_num):
     success_rate_summary = tf.summary.scalar("Success Rate", success_rate_placeholder)
     transmit_time_summary = tf.summary.scalar("Transmit Time", transmit_time_placeholder)
     wait_time_summary = tf.summary.scalar("Wait Time", wait_time_placeholder)
-    avg_reward_summary = tf.summary.scalar("Average Reward", avg_reward_placeholder)
+    avg_reward_summary = tf.summary.scalar("Average Reward", global_reward_placeholder)
 
     with tf.Session(config=config) as sess:
         sess.run(init)
@@ -130,12 +126,11 @@ def train(env, agents, task_num):
 
         step = 0
         completion_time_dic = {}
-        reward_dic = {}
+        global_reward_dic = {}
         computation_time_dic = {}
         transmit_time_dic = {}
         wait_time_dic = {}
-        success_rate_dic = {}
-        success_rate_history = {}  # 新增：用于存储每个episode的任务成功率
+        global_success_rate = {}
 
         devices = [i+1 for i in range(len(env.deviceList))]
 
@@ -144,7 +139,7 @@ def train(env, agents, task_num):
             observations = env.reset()
             episode_done = False
             time_step = 1
-            max_time = 1
+            max_time = 100
             task_count = 0
 
             agent_data = {
@@ -159,7 +154,7 @@ def train(env, agents, task_num):
                 for agent_id0 in devices
             }
 
-            while not episode_done or time_step <= max_time:
+            while not episode_done and time_step <= max_time:
                 print("------------------timestep: ", time_step, "------------------")
                 tasks = getTasksByTime(env.taskList, time_step)
                 task_count += len(tasks)
@@ -186,14 +181,13 @@ def train(env, agents, task_num):
                             actions.append(default_action)
 
                     # 与环境交互
-                    observation_, reward, done, task_success_rate, finish_times, compute_times, bandwidths, transmit_times, wait_times = env.step(actions, tasks, time_step, agent_id)
+                    observation_, reward, done, successful_tasks, finish_times, compute_times, bandwidths, transmit_times, wait_times = env.step(actions, tasks, time_step, agent_id)
 
                     print("reward", reward)
                     print("finish_times", finish_times)
                     print("compute_times", compute_times)
                     print("transmit_times", transmit_times)
                     print("wait_times", wait_times)
-                    print("task_success_rate", task_success_rate)
 
                     # 为每个代理存储转换
                     for i, task in enumerate(tasks):
@@ -228,8 +222,6 @@ def train(env, agents, task_num):
                         transmit_time = 0
                         wait_time = 0
                         sum_reward = 0
-                        success_rate_dic[episode_i] = task_success_rate
-                        success_rate_history[episode_i] = task_success_rate  # 新增：保存每个episode的任务成功率
 
                         for taskId in agent_data[agent_id]['task_time_dic'].keys():
                             completion_time += agent_data[agent_id]['task_time_dic'][taskId]
@@ -240,18 +232,21 @@ def train(env, agents, task_num):
 
                         completion_time_dic[episode_i] = completion_time
                         computation_time_dic[episode_i] = compute_time
-                        success_rate_dic[episode_i] = task_success_rate
+                        if episode_i not in global_success_rate:
+                            global_success_rate[episode_i] = successful_tasks/float(task_num)
+                        else:
+                            global_success_rate[episode_i] += successful_tasks/float(task_num)
                         transmit_time_dic[episode_i] = transmit_time
                         wait_time_dic[episode_i] = wait_time
-                        reward_dic[episode_i] = sum_reward/float(task_num)
+                        global_reward_dic[episode_i] = sum_reward/float(task_num)
 
                         print(f"Episode {episode_i} finished")
                         print("completion_time_dic", completion_time_dic[episode_i])
                         print("computation_time_dic", computation_time_dic[episode_i])
-                        print("success_rate_dic", success_rate_dic[episode_i])
                         print("transmit_time_dic", transmit_time_dic[episode_i])
                         print("wait_time_dic", wait_time_dic[episode_i])
-                        print("reward_dic", reward_dic[episode_i])
+                        print("reward_dic", global_reward_dic[episode_i])
+                        print("global_success_rate", global_success_rate[episode_i])
 
                         # 运行摘要操作并将其添加到摘要写入器
                         summaries = sess.run(
@@ -259,10 +254,10 @@ def train(env, agents, task_num):
                             feed_dict={
                                 completion_time_placeholder: completion_time_dic[episode_i],
                                 compute_time_placeholder: computation_time_dic[episode_i],
-                                success_rate_placeholder: success_rate_dic[episode_i],
                                 transmit_time_placeholder: transmit_time_dic[episode_i],
                                 wait_time_placeholder: wait_time_dic[episode_i],
-                                avg_reward_placeholder: reward_dic[episode_i]
+                                global_reward_placeholder: global_reward_dic[episode_i],
+                                success_rate_placeholder: global_success_rate[episode_i]  # 新增这一行
                             }
                         )
 
@@ -272,6 +267,8 @@ def train(env, agents, task_num):
                 else:
                     env.add_new_state(time_step)
                     time_step += 1
+                    if time_step > max_time:  # 添加这一行
+                        episode_done = True   # 添加这一行
 
         # 保存模型
         for i, agent in enumerate(agents):
@@ -282,10 +279,10 @@ def train(env, agents, task_num):
         summary_writer.close()
 
     # 新增：将任务成功率数据保存到CSV文件
-    success_rate_df = pd.DataFrame.from_dict(success_rate_history, orient='index', columns=['Task Success Rate'])
-    success_rate_df.to_csv('task_success_rate.csv')
+    success_rate_df = pd.DataFrame.from_dict(global_success_rate, orient='index', columns=['Task Success Rate'])
+    success_rate_df.to_csv('result/task_success_rate.csv')
 
-    return completion_time_dic, reward_dic, computation_time_dic,success_rate_history
+    return completion_time_dic, global_reward_dic, computation_time_dic, global_success_rate
 
 ###### 2. 主测试 ######
 def run_model(env, agents, task_num):
@@ -306,7 +303,7 @@ def run_model(env, agents, task_num):
         computation_time_dic = {}
         transmit_time_dic = {}
         wait_time_dic = {}
-        success_rate_dic = {}
+        global_success_rate = {}
 
         devices = [i+1 for i in range(len(env.deviceList))]
 
@@ -357,20 +354,19 @@ def run_model(env, agents, task_num):
                             actions.append(default_action)
 
                     # 与环境交互
-                    observation_, reward, done, task_success_rate, finish_times, compute_times, bandwidths, transmit_times, wait_times = env.step(actions, tasks, time_step, agent_id)
+                    observation_, local_reward, done, successful_tasks, finish_times, compute_times, bandwidths, transmit_times, wait_times = env.step(actions, tasks, time_step, agent_id)
 
-                    print("reward", reward)
+                    print("local reward", local_reward)
                     print("finish_times", finish_times)
                     print("compute_times", compute_times)
                     print("transmit_times", transmit_times)
                     print("wait_times", wait_times)
-                    print("task_success_rate", task_success_rate)
+                    print("successful_tasks", successful_tasks)
 
                     # Store transitions for each agent
                     for i, task in enumerate(tasks):
                         agent_id = getDevicesByTask(env.deviceList, task)
-
-                        agent_data[agent_id]['avg_reward_dic'][task.taskId] = max(agent_data[agent_id]['avg_reward_dic'].get(task.taskId, -float('inf')), reward)
+                        agent_data[agent_id]['avg_reward_dic'][task.taskId] = max(agent_data[agent_id]['avg_reward_dic'].get(task.taskId, -float('inf')), local_reward)
                         agent_data[agent_id]['subtask_time_dic'][task.subId] = finish_times[i] - time_step + 1
                         agent_data[agent_id]['task_time_dic'][task.taskId] = max(agent_data[agent_id]['task_time_dic'].get(task.taskId, -float('inf')), finish_times[i] - time_step + 1)
                         agent_data[agent_id]['compute_time_dic'][task.taskId] = agent_data[agent_id]['compute_time_dic'].get(task.taskId, 0) + compute_times[i]
@@ -398,7 +394,10 @@ def run_model(env, agents, task_num):
 
                         completion_time_dic[episode_i] = completion_time
                         computation_time_dic[episode_i] = compute_time
-                        success_rate_dic[episode_i] = task_success_rate
+                        if episode_i not in global_success_rate:
+                            global_success_rate[episode_i] = successful_tasks
+                        else:
+                            global_success_rate[episode_i] += successful_tasks
                         transmit_time_dic[episode_i] = transmit_time
                         wait_time_dic[episode_i] = wait_time
                         reward_dic[episode_i] = sum_reward/float(task_num)
@@ -407,10 +406,10 @@ def run_model(env, agents, task_num):
                         print(f"Episode {episode_i} finished")
                         print("completion_time_dic", completion_time_dic[episode_i])
                         print("computation_time_dic", computation_time_dic[episode_i])
-                        print("success_rate_dic", success_rate_dic[episode_i])
                         print("transmit_time_dic", transmit_time_dic[episode_i])
                         print("wait_time_dic", wait_time_dic[episode_i])
                         print("reward_dic", reward_dic[episode_i])
+                        print("global_success_rate", global_success_rate[episode_i]/float(task_num))
                 else:
                     env.add_new_state(time_step)
                     time_step += 1
@@ -440,14 +439,14 @@ def plot_TSR(success_rate_history):
     plt.xlabel('Episode')
     plt.ylabel('Task Success Rate')
     plt.grid(True)
-    plt.savefig('task_success_rate_plot.png')
+    plt.savefig('result/task_success_rate_plot.png')
     plt.close()
 
 if __name__ == "__main__":
     ##################### paths & device ####################
-    ali_data = "rfile/Task/"
-    task_file_path = ali_data+"task_info_5.csv"
-    task_pre_path = ali_data+"task_pre_5.csv"
+    ali_data = "file/Task/"
+    task_file_path = ali_data+"task_info_10.csv"
+    task_pre_path = ali_data+"task_pre_10.csv"
     # ali_data = "rfile/Bandwidth/"
     # task_file_path = ali_data+"task_info_30.csv"
     # task_pre_path = ali_data+"task_pre_30.csv"
@@ -481,7 +480,7 @@ if __name__ == "__main__":
 
     # 1.3 multi-agent initialization
     agents = []
-    NUM_AGENT = 1  # TODO Revised by the number of devices
+    NUM_AGENT = 8  # TODO Revised by the number of devices
     for i in range(1, NUM_AGENT+1):
         s_dim = edges_devices_num[i-1]
         # print(s_dim)
@@ -501,10 +500,10 @@ if __name__ == "__main__":
     reward_model = AutoEncoder(r_input_dim, hidden_dim, r_output_dim)  # 147 1
 
     ##################### 2. training ####################
-    completion_time_dic, reward_dic, computation_time_dic,success_rate_history = train(env, agents, task_num)
+    completion_time_dic, global_reward_dic, computation_time_dic, global_success_rate = train(env, agents, task_num)
 
     # 新增：调用绘图函数
-    plot_TSR(success_rate_history)
+    plot_TSR(global_reward_dic)
     # 2. evaluation
     # run_model(env, agents, task_num)
 

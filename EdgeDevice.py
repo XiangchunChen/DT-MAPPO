@@ -6,7 +6,7 @@ class EdgeDevice:
         self.cpuNum = cpuNum
         self.waitTime = waitTime
         self.resource = resource
-        self.failureRate = 0.0009 # DT is 0.0001
+        self.failureRate = 0.00099 # DT is 0.0001
 
     def setfailureRate(self, failureRate):
         self.failureRate = failureRate

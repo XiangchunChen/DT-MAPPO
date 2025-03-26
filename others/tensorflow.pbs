@@ -1,0 +1,23 @@
+#!/bin/sh
+#PBS -N DQN_run_device
+#PBS -q qgpu01
+#PBS -l nodes=1:ppn=10 -W x=GRES:gpu@2
+#PBS -l walltime=72:00:00
+#PBS -l mem=50gb
+#PBS -j oe
+#PBS -V
+module load Anaconda3
+source activate tf1.14_cuda10
+cd $PBS_O_WORKDIR
+echo "Process will start at : "
+date
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+export OMP_NUM_THREADS=$PBS_NUM_PPN
+export MPLBACKEND=AGG
+export TF_CPP_MIN_LOG_LEVEL=2
+export CUDA_VISIBLE_DEVICE=4
+python DQN_run_this.py > result.out
+echo "++++++++++++++++++++++++++++++++++++++++++++++++++++++++++"
+echo "Process end at : "
+date
+module unload Anaconda3

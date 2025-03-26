@@ -162,8 +162,9 @@ class MultiHopNetwork:
             wait_times.append(wait_time)
 
             finished_tasks += 1
-            if finish_time - t <= task.deadline:
-                if random.random() >= self.deviceList[device_action-1].failureRate * finished_tasks:  # 100% chance of success# Assuming each task has a deadline attribute
+            complete_time = finish_time - t
+            if complete_time <= task.deadline:
+                if random.random() >= self.deviceList[device_action-1].failureRate:
                     task.setSuccessFlag(True)
             # if finish_time - t <= task.deadline:
             #     # Use deterministic methods to simulate node failures
@@ -181,8 +182,7 @@ class MultiHopNetwork:
         task_success_rate = float(successful_tasks) / len(task_success_flags) if task_success_flags else 0
         print(f"Task success rate: {task_success_rate}")
         print("task_success_flags", len(task_success_flags))
-        print(f"Finished tasks: {finished_tasks}")
-        overall_reward = task_success_rate  # Negative because we want to maximize success rate
+        local_reward = task_success_rate  # Positive because we want to maximize success rate
 
         # Update the state
         self.add_new_state(t)
@@ -195,7 +195,7 @@ class MultiHopNetwork:
 
         done = (finished_tasks == len(tasks))
 
-        return next_state, overall_reward, done, task_success_rate, finish_times, compute_times, bandwidths, transmit_times, wait_times
+        return next_state, local_reward, done, successful_tasks, finish_times, compute_times, bandwidths, transmit_times, wait_times
 
     def add_new_state(self, t):
         a = self.state_df.iloc[0].values.tolist()
